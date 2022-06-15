@@ -2,14 +2,31 @@
   "version": 2,
   "robot": {
     "modules": {
-      "app": {
-          "driver": "basler_camera:BaslerCamera",
+      "from_control": {
+          "driver": "subt.pull:Pull",
           "init": {
-            "address": "192.168.1.100",
-            "storage": "/home/cejnemat/ovosad_data"
+            "endpoint": "tcp://127.0.0.1:5556",
+            "outputs": ["control_msg"]
+          }
+      },
+      "measure_node": {
+        "driver": "measure_node:MeasureNode",
+        "out": "work_dir",
+        "init": {
+          "storage_path": "tmp"
+        }
+      },
+      "basler_camera": {
+          "driver": "basler_camera:BaslerCamera",
+          "in": "work_dir",
+          "init": {
+            "address": "192.168.1.100"
           }
       }
     },
-    "links": []
+    "links": [
+      ["from_control.control_msg", "measure_node.control_msg"],
+      ["measure_node.work_dir", "basler_camera.work_dir"]
+    ]
   }
 }

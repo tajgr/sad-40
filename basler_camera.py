@@ -6,19 +6,16 @@ import time
 import os
 import json
 from threading import Thread
+from osgar.node import Node
 
 from pypylon import pylon
 
 
-class BaslerCamera:
+class BaslerCamera(Node):
+
     def __init__(self, config, bus):
-        self.input_thread = Thread(target=self.run_input, daemon=True)
-        self.bus = bus
-        # Some parameters could be loaded from config file (see the example).
+        super().__init__(config, bus)
         self.address = config.get("address", False)
-        self.storage_path = config.get("storage", ".")
-
-
         tlf = pylon.TlFactory.GetInstance()
         if not self.address:
             self.cam = pylon.InstantCamera(tlf.CreateFirstDevice())
@@ -33,54 +30,89 @@ class BaslerCamera:
                 raise EnvironmentError("no GigE device found")
 
         self.cam.Open()
-        self.cam.ExposureAuto.SetValue('Continuous')
-#        self.cam.Gamma.SetValue(0.4)
-        self.cam.GainAuto.SetValue("Continuous")
-        #self.cam.GainRaw.SetValue(34)
 
-#        a = self.cam.Gain.GetValue()
-#        print(a)
-        self.bus.register('data')
+        self.cam.ExposureAuto.SetValue('Off')
+        self.cam.ExposureTimeAbs.SetValue(170_000)
+        self.cam.GainAuto.SetValue("Off")
+        self.cam.GainRaw.SetValue(34)
 
 
-    def start(self):
-        self.input_thread.start()
+        self.bus.register('picture')
+        self.bus.register('metadata')
 
-    def join(self, timeout=None):
-        self.input_thread.join(timeout=timeout)
+        self.expo_value = -1
+        self.set_exposure()
 
-    def run_input(self):
-        folder_name = "set_{}".format(int(time.time()))
-        os.mkdir(os.path.join(self.storage_path, folder_name))
-        
-        settings_path = os.path.join(self.storage_path, folder_name, "settings.pfs")
-        pylon.FeaturePersistence.Save(settings_path, self.cam.GetNodeMap())
-        
+
+    def set_exposure(self):
+        """ Wait till exposure is adapted - timeout is 20 seconds.
+        """
+        self.cam.Width.SetValue(2304)
+        self.cam.OffsetX.SetValue(2304)
+        self.cam.ExposureAuto.SetValue('Once')
+
+        self.cam.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+
+        for k in range(20):
+            time.sleep(1)
+            new_expo = self.cam.ExposureTimeAbs.GetValue()
+            if abs(new_expo - self.expo_value) < 50:
+                break
+            #print(k, new_expo)
+            self.expo_value = new_expo
+
+
+        self.cam.StopGrabbing()
+        self.cam.OffsetX.SetValue(0)
+        self.cam.Width.SetValue(2*2304)
+        print(self.expo_value)
+        #self.cam.ExposureTimeRaw.SetValue(int(expo_value))
+        self.cam.ExposureAuto.SetValue('Off')
+
+
+    def update(self):
+        dt, channel, data = self.listen()
+        # print(dt, channel, data)
+        if channel != "work_dir":
+            return
+        # data = "/home/ovosad/ovosad_data/test_basler_02"
+        save_path = data
+
+        metadata = {"pictures": {}}
+        ev_values = [1, 0.5, 0.25, 0.125, 2, 4, 8]
+        for ii, ev in enumerate(ev_values):
+            try:
+                self.cam.ExposureTimeAbs.SetValue(self.expo_value * ev)
+                short_name = "im_basler_EV{}.tiff".format(ii)
+                long_name = os.path.join(save_path, short_name)
+                self.take_pic(long_name)
+                metadata["pictures"][short_name] = {
+                    "path": str(long_name),
+                    "exposure": self.cam.ExposureTimeAbs.GetValue(),
+                }
+            except Exception as e:
+                pass
+                print(e)
+                try:
+                    self.cam.StopGrabbing()
+                except:
+                    pass
+
+        self.bus.publish("metadata", json.dumps(metadata))
+        #self.bus.publish("picture:null", data) # TODO not ready for production
+
+        meta_path = os.path.join(save_path, "basler_meta.json")
+        with open(meta_path, "w") as f:
+            f.write(json.dumps(metadata, indent=4))
+
+    def take_pic(self, savepath):
         self.cam.StartGrabbing()
         img = pylon.PylonImage()
-        while self.bus.is_alive():
-
-            with self.cam.RetrieveResult(2000) as result:
-                img.AttachGrabResultBuffer(result)
-
-                short_name = "picture_{}.tiff".format(time.time())
-                long_name = os.path.join(folder_name, short_name)
-                filename = os.path.join(self.storage_path, long_name)
-                # filename = os.path.join(self.storage_path, name)
-                img.Save(pylon.ImageFileFormat_Tiff, filename)
-
-                # In order to make it possible to reuse the grab result for grabbing
-                # again, we have to release the image (effectively emptying the
-                # image object).
-                data = json.dumps({
-                    "path": long_name,
-                    "name": short_name,
-                    "exposure": self.cam.ExposureTimeAbs.GetValue(),
-                    "gain": self.cam.GainRaw.GetValue(), 
-                })
-                self.bus.publish("data", data)
-                img.Release()
-                
+        with self.cam.RetrieveResult(1000) as result:
+            img.AttachGrabResultBuffer(result)
+            img.Save(pylon.ImageFileFormat_Tiff, savepath)
+            img.Release()
+        self.cam.StopGrabbing()
 
     def request_stop(self):
         self.cam.StopGrabbing()

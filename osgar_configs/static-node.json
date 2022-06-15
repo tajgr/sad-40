@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "robot": {
+    "modules": {
+      "from_control": {
+          "driver": "subt.pull:Pull",
+          "init": {
+            "endpoint": "tcp://127.0.0.1:5556",
+            "outputs": ["control_msg"]
+          }
+      },
+      "measure_node": {
+        "driver": "measure_node:MeasureNode",
+        "init": {}
+      }
+    },
+    "links": [
+              ["from_control.control_msg", "measure_node.control_msg"]
+    ]
+  }
+}

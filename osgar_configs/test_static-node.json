@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "robot": {
+    "modules": {
+      "from_control": {
+          "driver": "subt.pull:Pull",
+          "init": {
+            "endpoint": "tcp://127.0.0.1:5556",
+            "outputs": ["control_msg"]
+          }
+      },
+      "to_control": {
+        "driver": "subt.push:Push",
+        "init": {
+          "endpoint": "tcp://127.0.0.1:5555"
+        }
+      },
+      "measure_node": {
+        "driver": "measure_node:MeasureNode",
+        "out": "work_dir",
+        "init": {
+          "storage_path": "tmp"
+        }
+      },
+      "arecont": {
+        "driver": "arecont:Arecont",
+        "in": "work_dir",
+        "out": "image",
+        "init": {}
+      }
+    },
+    "links": [
+      ["from_control.control_msg", "measure_node.control_msg"],
+      ["measure_node.work_dir", "arecont.work_dir"],
+      ["arecont.image", "measure_node.arecont_image"],
+
+      ["measure_node.arecont_prev", "to_control.arecont_prev"],
+      ["measure_node.basler_prev", "to_control.basler_prev"],
+      ["measure_node.rs_prev", "to_control.rs_prev"],
+      ["measure_node.depth_prev", "to_control.depth_prev"]
+    ]
+  }
+}
